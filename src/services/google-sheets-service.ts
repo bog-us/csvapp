@@ -213,4 +213,219 @@ async function getModifiedRows<T>(
       columnCount: sheetInfo.properties.gridProperties.columnCount
     };
     
-    // Verifică dacă au exista
+    // Verifică dacă au existat modificări bazate pe etag
+    if (lastSync && lastSync.etag === currentMetadata.etag) {
+      // Nu au existat modificări, returnează un rezultat gol
+      return {
+        data: [] as T[],
+        metadata: currentMetadata
+      };
+    }
+    
+    // Obține toate datele pentru a compara
+    const newData = await fetchSheetData<T>(sheetName, range);
+    
+    // Dacă nu există un sync anterior, returnează toate datele
+    if (!lastSync) {
+      return {
+        data: newData,
+        metadata: currentMetadata
+      };
+    }
+    
+    // Dacă numărul de rânduri s-a modificat semnificativ sau avem un etag nou,
+    // este mai eficient să returnăm toate datele noi
+    const rowCountDiff = Math.abs(currentMetadata.rowCount - lastSync.rowCount);
+    if (rowCountDiff > 10 || currentMetadata.etag !== lastSync.etag) {
+      return {
+        data: newData,
+        metadata: currentMetadata
+      };
+    }
+    
+    // Altfel, încercăm să obținem doar rândurile modificate
+    // Implementare mai complexă, care ar necesita accesul la datele anterioare
+    // Pentru simplicitate, returnăm toate datele
+    return {
+      data: newData,
+      metadata: currentMetadata
+    };
+  } catch (error) {
+    console.error(`Eroare la obținerea rândurilor modificate pentru ${sheetName}:`, error);
+    throw error;
+  }
+}
+
+// Funcțiile pentru a obține date din fiecare sheet
+async function getCaseSchimb(): Promise<CasaSchimbType[]> {
+  // Verifică dacă există date valide în cache
+  if (isCacheValid(dataCache.caseSchimb)) {
+    return dataCache.caseSchimb!.data;
+  }
+  
+  try {
+    const data = await fetchWithRetry(() => 
+      fetchSheetData<CasaSchimbType>('CaseSchimb', 'A1:Z1000')
+    );
+    
+    // Actualizează cache-ul
+    dataCache.caseSchimb = {
+      data,
+      timestamp: Date.now(),
+      version: '1.0'
+    };
+    
+    return data;
+  } catch (error) {
+    console.error('Eroare la obținerea datelor despre case de schimb:', error);
+    // Returnează cache-ul expirat dacă există, altfel un array gol
+    return dataCache.caseSchimb?.data || [];
+  }
+}
+
+async function getPuncteSchimb(): Promise<PunctSchimbType[]> {
+  // Verifică dacă există date valide în cache
+  if (isCacheValid(dataCache.puncteSchimb)) {
+    return dataCache.puncteSchimb!.data;
+  }
+  
+  try {
+    const data = await fetchWithRetry(() => 
+      fetchSheetData<PunctSchimbType>('PuncteSchimb', 'A1:Z5000')
+    );
+    
+    // Actualizează cache-ul
+    dataCache.puncteSchimb = {
+      data,
+      timestamp: Date.now(),
+      version: '1.0'
+    };
+    
+    return data;
+  } catch (error) {
+    console.error('Eroare la obținerea datelor despre puncte de schimb:', error);
+    // Returnează cache-ul expirat dacă există, altfel un array gol
+    return dataCache.puncteSchimb?.data || [];
+  }
+}
+
+async function getDateFinanciare(): Promise<DateFinanciareType[]> {
+  // Verifică dacă există date valide în cache
+  if (isCacheValid(dataCache.dateFinanciare)) {
+    return dataCache.dateFinanciare!.data;
+  }
+  
+  try {
+    const data = await fetchWithRetry(() => 
+      fetchSheetData<DateFinanciareType>('DateFinanciare', 'A1:Z3000')
+    );
+    
+    // Actualizează cache-ul
+    dataCache.dateFinanciare = {
+      data,
+      timestamp: Date.now(),
+      version: '1.0'
+    };
+    
+    return data;
+  } catch (error) {
+    console.error('Eroare la obținerea datelor financiare:', error);
+    // Returnează cache-ul expirat dacă există, altfel un array gol
+    return dataCache.dateFinanciare?.data || [];
+  }
+}
+
+async function getDateAngajati(): Promise<DateAngajatiType[]> {
+  // Verifică dacă există date valide în cache
+  if (isCacheValid(dataCache.dateAngajati)) {
+    return dataCache.dateAngajati!.data;
+  }
+  
+  try {
+    const data = await fetchWithRetry(() => 
+      fetchSheetData<DateAngajatiType>('DateAngajati', 'A1:Z2000')
+    );
+    
+    // Actualizează cache-ul
+    dataCache.dateAngajati = {
+      data,
+      timestamp: Date.now(),
+      version: '1.0'
+    };
+    
+    return data;
+  } catch (error) {
+    console.error('Eroare la obținerea datelor despre angajați:', error);
+    // Returnează cache-ul expirat dacă există, altfel un array gol
+    return dataCache.dateAngajati?.data || [];
+  }
+}
+
+// Funcție pentru a invalida cache-ul și a forța reîmprospătarea datelor
+function invalidateCache(sheetType?: keyof typeof dataCache): void {
+  if (sheetType) {
+    // Invalidează doar cache-ul pentru tipul specificat
+    if (dataCache[sheetType]) {
+      delete dataCache[sheetType];
+    }
+  } else {
+    // Invalidează tot cache-ul
+    Object.keys(dataCache).forEach(key => {
+      delete dataCache[key as keyof typeof dataCache];
+    });
+  }
+}
+
+// Funcție pentru a configura polling pentru actualizări
+function setupPolling(
+  intervalMinutes: number = 5,
+  onDataUpdated?: () => void
+): () => void {
+  const intervalMs = intervalMinutes * 60 * 1000;
+  
+  // Funcție pentru a verifica actualizări
+  const checkForUpdates = async () => {
+    try {
+      // Verifică modificări pentru fiecare sheet
+      const sheets = ['CaseSchimb', 'PuncteSchimb', 'DateFinanciare', 'DateAngajati'];
+      let hasUpdates = false;
+      
+      for (const sheet of sheets) {
+        const lastModified = await getSheetLastModified(sheet);
+        const cacheKey = sheet.toLowerCase() as keyof typeof dataCache;
+        
+        if (dataCache[cacheKey]?.version !== lastModified) {
+          // Marchează că există actualizări
+          hasUpdates = true;
+          break;
+        }
+      }
+      
+      if (hasUpdates && onDataUpdated) {
+        // Invalidează cache-ul și notifică despre actualizări
+        invalidateCache();
+        onDataUpdated();
+      }
+    } catch (error) {
+      console.error('Eroare în timpul verificării actualizărilor:', error);
+    }
+  };
+  
+  // Configurează interval pentru verificare
+  const intervalId = setInterval(checkForUpdates, intervalMs);
+  
+  // Returnează o funcție pentru a opri polling-ul
+  return () => clearInterval(intervalId);
+}
+
+// Exportă interfața serviciului
+const GoogleSheetsService = {
+  getCaseSchimb,
+  getPuncteSchimb,
+  getDateFinanciare,
+  getDateAngajati,
+  invalidateCache,
+  setupPolling
+};
+
+export default GoogleSheetsService;
