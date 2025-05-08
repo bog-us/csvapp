@@ -13,11 +13,11 @@ export const DataIntegrationService = {
    * Asociază datele financiare cu casele de schimb folosind CUI
    */
   associateFinancialData(
-    case: CasaSchimbType[], 
+    caseData: CasaSchimbType[], 
     dateFinanciare: DateFinanciareType[], 
     an?: number
   ): (CasaSchimbType & { dateFinanciare?: DateFinanciareType })[] {
-    if (!case.length || !dateFinanciare.length) return case;
+    if (!caseData.length || !dateFinanciare.length) return caseData;
     
     // Determină anul cel mai recent disponibil în datele financiare dacă nu e specificat
     const targetYear = an || Math.max(...dateFinanciare.map(df => df["AN DE REFERINTA"]));
@@ -34,7 +34,7 @@ export const DataIntegrationService = {
     });
     
     // Asociază datele financiare cu casele de schimb
-    return case.map(casa => {
+    return caseData.map(casa => {
       const finData = financialDataMap.get(casa["COD FISCAL CASA"]);
       return {
         ...casa,
