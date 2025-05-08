@@ -14,6 +14,14 @@ interface Props {
   initialQuestion?: string;
 }
 
+// Funcția utilitară pentru transformarea distribuției în array
+const getLocationDistribution = (distributionObj: Record<string, number>, limit: number) => {
+  return Object.entries(distributionObj || {})
+    .map(([judet, count]) => ({ judet, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+};
+
 const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
   const { 
     caseSchimb, 
@@ -52,7 +60,7 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
       const dataContext = {
         numCaseSchimb: caseSchimb.length,
         numPuncteSchimb: puncteSchimb.length,
-        topJudete: distributionByLocation.slice(0, 5),
+        topJudete: getLocationDistribution(distributionByLocation, 5),
         metrics: financialMetrics,
         trends: {
           caseActive: caseSchimb.filter(c => !c["DATA INCHIDERE CASA"]).length,
@@ -85,7 +93,7 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
       let dataContext: any = {
         numCaseSchimb: caseSchimb.length,
         numPuncteSchimb: puncteSchimb.length,
-        distributionByLocation: distributionByLocation.slice(0, 10),
+        distributionByLocation: getLocationDistribution(distributionByLocation, 10),
         financialMetrics
       };
       
@@ -120,9 +128,11 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
           break;
           
         case 'geographic':
+          const topJudete = getLocationDistribution(distributionByLocation, 10);
+          
           dataContext.geografic = {
-            topJudete: distributionByLocation.slice(0, 10),
-            distributionDetails: distributionByLocation.map(loc => {
+            topJudete: topJudete,
+            distributionDetails: topJudete.map(loc => {
               const casaIds = puncteSchimb
                 .filter(p => p["JUDET / SECTOR PUNCT"] === loc.judet)
                 .map(p => p["COD CASA  CU S"]);
@@ -230,7 +240,7 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
         numPuncteSchimb: puncteSchimb.length,
         caseActive: caseSchimb.filter(c => !c["DATA INCHIDERE CASA"]).length,
         puncteActive: puncteSchimb.filter(p => !p["DATA INCHIDERE PUNCT"]).length,
-        distributieJudete: distributionByLocation.slice(0, 10),
+        distributieJudete: getLocationDistribution(distributionByLocation, 10),
         topCase: Object.entries(
           puncteSchimb.reduce((acc, punct) => {
             const casaId = punct["COD CASA  CU S"];
