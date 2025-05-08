@@ -1,0 +1,256 @@
+src/services/googleSheetsService.ts (completat)
+typescriptimport axios from 'axios';
+import { 
+  CasaSchimbType, 
+  PunctSchimbType, 
+  DateFinanciareType 
+} from '../types';
+
+// Configurare pentru API
+const API_KEY = process.env.NEXT_PUBLIC_GOOGLE_SHEETS_API_KEY;
+const SHEET_ID = '12eokegJ46GM9nF86wtCgHu2wDSn9OS0GY_qBWeIUekI';
+
+// Cache pentru date
+interface CacheItem<T> {
+  data: T[];
+  timestamp: number;
+  version: string;
+}
+
+const dataCache: Record<string, CacheItem<any>> = {};
+const CACHE_TTL = 5 * 60 * 1000; // 5 minute
+
+// Funcție pentru a verifica dacă cache-ul este valid
+const isCacheValid = <T>(cache?: CacheItem<T>): boolean => {
+  if (!cache) return false;
+  
+  const now = Date.now();
+  return now - cache.timestamp < CACHE_TTL;
+};
+
+// Funcția de fetch generică pentru o foaie specifică
+async function fetchSheetData<T>(sheetName: string, range: string): Promise<T[]> {
+  try {
+    const response = await axios.get(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${sheetName}!${range}`,
+      {
+        params: {
+          key: API_KEY,
+          valueRenderOption: 'UNFORMATTED_VALUE',
+          dateTimeRenderOption: 'FORMATTED_STRING'
+        }
+      }
+    );
+
+    const headers = response.data.values[0];
+    
+    // Transformă datele în obiecte
+    const data = response.data.values.slice(1).map((row: any[]) => {
+      const item: Record<string, any> = {};
+      
+      headers.forEach((header: string, index: number) => {
+        item[header] = row[index];
+      });
+      
+      return item as T;
+    });
+
+    return data;
+  } catch (error) {
+    console.error(`Eroare la încărcarea datelor din sheet-ul ${sheetName}:`, error);
+    throw error;
+  }
+}
+
+// Funcție pentru a obține ultima modificare a sheet-ului
+async function getSheetLastModified(sheetName: string): Promise<string> {
+  try {
+    const response = await axios.get(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`,
+      {
+        params: {
+          key: API_KEY,
+          fields: 'sheets.properties'
+        }
+      }
+    );
+
+    const sheets = response.data.sheets;
+    const targetSheet = sheets.find((sheet: any) => 
+      sheet.properties.title === sheetName
+    );
+    
+    if (targetSheet) {
+      return targetSheet.properties.updated || '';
+    }
+    
+    return '';
+  } catch (error) {
+    console.error('Eroare la obținerea informațiilor despre ultima modificare:', error);
+    return '';
+  }
+}
+
+// Serviciul de acces la datele din Google Sheets
+const GoogleSheetsService = {
+  // Obține datele despre case de schimb
+  async getCaseSchimb(): Promise<CasaSchimbType[]> {
+    const cacheKey = 'caseSchimb';
+    
+    // Verifică dacă există în cache și este valid
+    if (dataCache[cacheKey] && isCacheValid(dataCache[cacheKey])) {
+      return dataCache[cacheKey].data as CasaSchimbType[];
+    }
+    
+    // Obține datele de la API
+    const data = await fetchSheetData<CasaSchimbType>('CaseSchimb', 'A1:K1000');
+    
+    // Procesează datele (de exemplu, converteste datele string în Date)
+    const processedData = data.map(casa => ({
+      ...casa,
+      // Adaugă un câmp computed pentru status activ/inactiv
+      isActive: !casa["DATA INCHIDERE CASA"]
+    }));
+    
+    // Stochează în cache
+    dataCache[cacheKey] = {
+      data: processedData,
+      timestamp: Date.now(),
+      version: '1.0'
+    };
+    
+    return processedData;
+  },
+  
+  // Obține datele despre puncte de schimb
+  async getPuncteSchimb(): Promise<PunctSchimbType[]> {
+    const cacheKey = 'puncteSchimb';
+    
+    // Verifică dacă există în cache și este valid
+    if (dataCache[cacheKey] && isCacheValid(dataCache[cacheKey])) {
+      return dataCache[cacheKey].data as PunctSchimbType[];
+    }
+    
+    // Obține datele de la API
+    const data = await fetchSheetData<PunctSchimbType>('PuncteSchimb', 'A1:J1000');
+    
+    // Procesează datele
+    const processedData = data.map(punct => ({
+      ...punct,
+      // Adaugă un câmp computed pentru status activ/inactiv
+      isActive: !punct["DATA INCHIDERE PUNCT"]
+    }));
+    
+    // Stochează în cache
+    dataCache[cacheKey] = {
+      data: processedData,
+      timestamp: Date.now(),
+      version: '1.0'
+    };
+    
+    return processedData;
+  },
+  
+  // Obține datele financiare
+  async getDateFinanciare(): Promise<DateFinanciareType[]> {
+    const cacheKey = 'dateFinanciare';
+    
+    // Verifică dacă există în cache și este valid
+    if (dataCache[cacheKey] && isCacheValid(dataCache[cacheKey])) {
+      return dataCache[cacheKey].data as DateFinanciareType[];
+    }
+    
+    // Obține datele de la API
+    const data = await fetchSheetData<DateFinanciareType>('DateFinanciare', 'A1:M1000');
+    
+    // Stochează în cache
+    dataCache[cacheKey] = {
+      data,
+      timestamp: Date.now(),
+      version: '1.0'
+    };
+    
+    return data;
+  },
+  
+  // Obține datele despre angajați
+  async getDateAngajati(): Promise<any[]> {
+    const cacheKey = 'dateAngajati';
+    
+    // Verifică dacă există în cache și este valid
+    if (dataCache[cacheKey] && isCacheValid(dataCache[cacheKey])) {
+      return dataCache[cacheKey].data as any[];
+    }
+    
+    // Obține datele de la API
+    const data = await fetchSheetData<any>('Angajati', 'A1:E1000');
+    
+    // Stochează în cache
+    dataCache[cacheKey] = {
+      data,
+      timestamp: Date.now(),
+      version: '1.0'
+    };
+    
+    return data;
+  },
+  
+  // Obține timestamp-ul ultimei modificări a unui sheet
+  async getLastModifiedTimestamp(sheetName: string = 'CaseSchimb'): Promise<string> {
+    return getSheetLastModified(sheetName);
+  },
+  
+  // Configurează polling pentru actualizări
+  setupPolling(intervalMinutes: number = 5, onUpdate?: () => void): () => void {
+    // ID-ul timerului pentru a-l putea opri
+    const timerId = setInterval(async () => {
+      try {
+        // Verifică timestamp-ul ultimei modificări pentru fiecare sheet principal
+        const caseSchimbTimestamp = await getSheetLastModified('CaseSchimb');
+        const puncteSchimbTimestamp = await getSheetLastModified('PuncteSchimb');
+        const dateFinanciareTimestamp = await getSheetLastModified('DateFinanciare');
+        
+        // Verifică dacă este mai recent decât cache-ul
+        const hasUpdates = [
+          {
+            key: 'caseSchimb',
+            timestamp: caseSchimbTimestamp
+          },
+          {
+            key: 'puncteSchimb',
+            timestamp: puncteSchimbTimestamp
+          },
+          {
+            key: 'dateFinanciare',
+            timestamp: dateFinanciareTimestamp
+          }
+        ].some(item => {
+          const cache = dataCache[item.key];
+          return !cache || new Date(item.timestamp) > new Date(cache.timestamp);
+        });
+        
+        if (hasUpdates && onUpdate) {
+          // Dacă sunt actualizări, notifică callback-ul
+          onUpdate();
+        }
+      } catch (error) {
+        console.error('Eroare la verificarea actualizărilor:', error);
+      }
+    }, intervalMinutes * 60 * 1000);
+    
+    // Returnează o funcție pentru a opri polling-ul
+    return () => clearInterval(timerId);
+  },
+  
+  // Invalidează cache-ul (forțează reîncărcarea datelor)
+  invalidateCache(key?: string): void {
+    if (key) {
+      delete dataCache[key];
+    } else {
+      // Invalidează tot cache-ul
+      Object.keys(dataCache).forEach(k => delete dataCache[k]);
+    }
+  }
+};
+
+export default GoogleSheetsService;
