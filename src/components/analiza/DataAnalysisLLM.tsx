@@ -1,5 +1,5 @@
 // src/components/analiza/DataAnalysisLLM.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useExchangeData } from '../../hooks/useExchangeData';
 import LLMService from '../../services/llmService';
 
@@ -29,8 +29,52 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
   const [selectedAnalysisType, setSelectedAnalysisType] = useState<AnalysisType>('trend');
   const [insights, setInsights] = useState<string[]>([]);
   
+  // Generare analiză la schimbarea tipului sau la încărcarea inițială (dacă există întrebare)
+  useEffect(() => {
+    if (initialQuestion) {
+      handleQuestionSubmit();
+    }
+  }, [initialQuestion]);
+  
+  // Generare de insights automate la încărcarea componentei
+  useEffect(() => {
+    if (caseSchimb.length && puncteSchimb.length && dateFinanciare.length) {
+      generateInsights();
+    }
+  }, [caseSchimb, puncteSchimb, dateFinanciare]);
+  
+  // Generează insights automate
+  const generateInsights = async () => {
+    setIsLoading(true);
+    
+    try {
+      // Pregătește un context condensat pentru LLM
+      const dataContext = {
+        numCaseSchimb: caseSchimb.length,
+        numPuncteSchimb: puncteSchimb.length,
+        topJudete: distributionByLocation.slice(0, 5),
+        metrics: financialMetrics,
+        trends: {
+          caseActive: caseSchimb.filter(c => !c["DATA INCHIDERE CASA"]).length,
+          puncteActive: puncteSchimb.filter(p => !p["DATA INCHIDERE PUNCT"]).length,
+          profitTotal: financialMetrics?.profitTotal || 0,
+          numarAngajati: financialMetrics?.numarTotalAngajati || 0
+        }
+      };
+      
+      // Obține insights de la LLM
+      const insightsList = await LLMService.suggestInsights(dataContext);
+      setInsights(insightsList);
+    } catch (error) {
+      console.error('Eroare la generarea insights-urilor:', error);
+      setInsights(['Nu s-au putut genera insights automate.']);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
   // Trimite întrebarea către LLM
-  const handleQuestionSubmit = async () => {
+  const handleQuestionSubmit = useCallback(async () => {
     if (!question.trim()) return;
     
     setIsLoading(true);
@@ -41,16 +85,13 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
       let dataContext: any = {
         numCaseSchimb: caseSchimb.length,
         numPuncteSchimb: puncteSchimb.length,
-        distributionByLocation: Object.entries(distributionByLocation)
-          .map(([judet, count]) => ({ judet, count }))
-          .sort((a, b) => b.count - a.count)
-          .slice(0, 10),
+        distributionByLocation: distributionByLocation.slice(0, 10),
         financialMetrics
       };
       
       // Adaugă contextul specific în funcție de tipul de analiză
       switch (selectedAnalysisType) {
-        case 'trend': {
+        case 'trend':
           dataContext.trends = {
             last3Years: dateFinanciare
               .filter(d => d["ARE_BILANT_DA/NU"] === "DA")
@@ -77,33 +118,28 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
               }))
           };
           break;
-        }
           
-        case 'geographic': {
+        case 'geographic':
           dataContext.geografic = {
-            topJudete: Object.entries(distributionByLocation)
-              .map(([judet, count]) => ({ judet, count }))
-              .sort((a, b) => b.count - a.count)
-              .slice(0, 10),
-            distributionDetails: Object.entries(distributionByLocation)
-              .map(([judet, count]) => {
-                const casaIds = puncteSchimb
-                  .filter(p => p["JUDET / SECTOR PUNCT"] === judet)
-                  .map(p => p["COD CASA  CU S"]);
-                
-                const uniqueCasaIds = [...new Set(casaIds)];
-                
-                return {
-                  judet,
-                  puncte: count,
-                  case: uniqueCasaIds.length
-                };
-              })
+            topJudete: distributionByLocation.slice(0, 10),
+            distributionDetails: distributionByLocation.map(loc => {
+              const casaIds = puncteSchimb
+                .filter(p => p["JUDET / SECTOR PUNCT"] === loc.judet)
+                .map(p => p["COD CASA  CU S"]);
+              
+              // Aici este modificarea pentru a rezolva eroarea de compilare
+              const uniqueCasaIds = Array.from(new Set(casaIds));
+              
+              return {
+                judet: loc.judet,
+                puncte: loc.count,
+                case: uniqueCasaIds.length
+              };
+            })
           };
           break;
-        }
           
-        case 'financial': {
+        case 'financial':
           // Adaugă date pentru top case după profit
           dataContext.financial = {
             topProfit: dateFinanciare
@@ -139,9 +175,8 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
               .slice(0, 5)
           };
           break;
-        }
           
-        case 'custom': {
+        case 'custom':
           // Pentru întrebări custom, includem toate datele relevante
           dataContext = {
             ...dataContext,
@@ -171,7 +206,6 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
             }
           };
           break;
-        }
       }
       
       // Trimite întrebarea către LLM
@@ -183,66 +217,7 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
     } finally {
       setIsLoading(false);
     }
-  };
-  
-  // Generare analiză la schimbarea tipului sau la încărcarea inițială (dacă există întrebare)
-  useEffect(() => {
-    if (initialQuestion) {
-      handleQuestionSubmit();
-    }
-  }, [initialQuestion, handleQuestionSubmit]);
-  
-  // Generează insights automate
-  const generateInsights = async () => {
-    setIsLoading(true);
-    
-    try {
-      // Pregătește un context condensat pentru LLM
-      const dataContext = {
-        numCaseSchimb: caseSchimb.length,
-        numPuncteSchimb: puncteSchimb.length,
-        topJudete: Object.entries(distributionByLocation)
-          .map(([judet, count]) => ({ judet, count }))
-          .sort((a, b) => b.count - a.count)
-          .slice(0, 5),
-        metrics: financialMetrics,
-        trends: {
-          caseActive: caseSchimb.filter(c => !c["DATA INCHIDERE CASA"]).length,
-          puncteActive: puncteSchimb.filter(p => !p["DATA INCHIDERE PUNCT"]).length,
-          profitTotal: financialMetrics?.profitTotal || 0,
-          numarAngajati: financialMetrics?.numarTotalAngajati || 0
-        }
-      };
-      
-      // Folosim interpretQuestion în loc de suggestInsights
-      const promptTemplate = `
-        Analizează datele furnizate despre casele de schimb valutar și generează 
-        5 insights scurte și relevante bazate pe aceste date. Răspunde cu o listă 
-        de insights separate prin linii noi, fără numerotare sau marcatori.
-      `;
-      
-      const response = await LLMService.interpretQuestion(promptTemplate, dataContext);
-      
-      // Transformăm răspunsul text în array de insights
-      const insightsList = response.split('\n')
-                              .map(line => line.trim())
-                              .filter(line => line.length > 0);
-                              
-      setInsights(insightsList);
-    } catch (error) {
-      console.error('Eroare la generarea insights-urilor:', error);
-      setInsights(['Nu s-au putut genera insights automate.']);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  
-  // Generare de insights automate la încărcarea componentei
-  useEffect(() => {
-    if (caseSchimb.length && puncteSchimb.length && dateFinanciare.length) {
-      generateInsights();
-    }
-  }, [caseSchimb, puncteSchimb, dateFinanciare, generateInsights]);
+  }, [question, selectedAnalysisType, caseSchimb, puncteSchimb, dateFinanciare, distributionByLocation, financialMetrics]);
   
   // Generează un raport narativ
   const generateNarrativeReport = async () => {
@@ -256,10 +231,7 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
         numPuncteSchimb: puncteSchimb.length,
         caseActive: caseSchimb.filter(c => !c["DATA INCHIDERE CASA"]).length,
         puncteActive: puncteSchimb.filter(p => !p["DATA INCHIDERE PUNCT"]).length,
-        distributieJudete: Object.entries(distributionByLocation)
-          .map(([judet, count]) => ({ judet, count }))
-          .sort((a, b) => b.count - a.count)
-          .slice(0, 10),
+        distributieJudete: distributionByLocation.slice(0, 10),
         topCase: Object.entries(
           puncteSchimb.reduce((acc, punct) => {
             const casaId = punct["COD CASA  CU S"];
