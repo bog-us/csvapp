@@ -14,14 +14,6 @@ interface Props {
   initialQuestion?: string;
 }
 
-// Funcția utilitară pentru transformarea distribuției în array
-const getLocationDistribution = (distributionObj: Record<string, number>, limit: number) => {
-  return Object.entries(distributionObj || {})
-    .map(([judet, count]) => ({ judet, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, limit);
-};
-
 const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
   const { 
     caseSchimb, 
@@ -37,50 +29,6 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
   const [selectedAnalysisType, setSelectedAnalysisType] = useState<AnalysisType>('trend');
   const [insights, setInsights] = useState<string[]>([]);
   
-  // Generare analiză la schimbarea tipului sau la încărcarea inițială (dacă există întrebare)
-  useEffect(() => {
-    if (initialQuestion) {
-      handleQuestionSubmit();
-    }
-  }, [initialQuestion]);
-  
-  // Generare de insights automate la încărcarea componentei
-  useEffect(() => {
-    if (caseSchimb.length && puncteSchimb.length && dateFinanciare.length) {
-      generateInsights();
-    }
-  }, [caseSchimb, puncteSchimb, dateFinanciare]);
-  
-  // Generează insights automate
-  const generateInsights = async () => {
-    setIsLoading(true);
-    
-    try {
-      // Pregătește un context condensat pentru LLM
-      const dataContext = {
-        numCaseSchimb: caseSchimb.length,
-        numPuncteSchimb: puncteSchimb.length,
-        topJudete: getLocationDistribution(distributionByLocation, 5),
-        metrics: financialMetrics,
-        trends: {
-          caseActive: caseSchimb.filter(c => !c["DATA INCHIDERE CASA"]).length,
-          puncteActive: puncteSchimb.filter(p => !p["DATA INCHIDERE PUNCT"]).length,
-          profitTotal: financialMetrics?.profitTotal || 0,
-          numarAngajati: financialMetrics?.numarTotalAngajati || 0
-        }
-      };
-      
-      // Obține insights de la LLM
-      const insightsList = await LLMService.suggestInsights(dataContext);
-      setInsights(insightsList);
-    } catch (error) {
-      console.error('Eroare la generarea insights-urilor:', error);
-      setInsights(['Nu s-au putut genera insights automate.']);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  
   // Trimite întrebarea către LLM
   const handleQuestionSubmit = async () => {
     if (!question.trim()) return;
@@ -93,13 +41,16 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
       let dataContext: any = {
         numCaseSchimb: caseSchimb.length,
         numPuncteSchimb: puncteSchimb.length,
-        distributionByLocation: getLocationDistribution(distributionByLocation, 10),
+        distributionByLocation: Object.entries(distributionByLocation)
+          .map(([judet, count]) => ({ judet, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 10),
         financialMetrics
       };
       
       // Adaugă contextul specific în funcție de tipul de analiză
       switch (selectedAnalysisType) {
-        case 'trend':
+        case 'trend': {
           dataContext.trends = {
             last3Years: dateFinanciare
               .filter(d => d["ARE_BILANT_DA/NU"] === "DA")
@@ -126,31 +77,33 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
               }))
           };
           break;
+        }
           
         case 'geographic': {
-          // Înconjură declarația variabilei cu acolade pentru a rezolva eroarea
-          const topJudete = getLocationDistribution(distributionByLocation, 10);
-          
           dataContext.geografic = {
-            topJudete: topJudete,
-            distributionDetails: topJudete.map(loc => {
-              const casaIds = puncteSchimb
-                .filter(p => p["JUDET / SECTOR PUNCT"] === loc.judet)
-                .map(p => p["COD CASA  CU S"]);
-              
-              const uniqueCasaIds = [...new Set(casaIds)];
-              
-              return {
-                judet: loc.judet,
-                puncte: loc.count,
-                case: uniqueCasaIds.length
-              };
-            })
+            topJudete: Object.entries(distributionByLocation)
+              .map(([judet, count]) => ({ judet, count }))
+              .sort((a, b) => b.count - a.count)
+              .slice(0, 10),
+            distributionDetails: Object.entries(distributionByLocation)
+              .map(([judet, count]) => {
+                const casaIds = puncteSchimb
+                  .filter(p => p["JUDET / SECTOR PUNCT"] === judet)
+                  .map(p => p["COD CASA  CU S"]);
+                
+                const uniqueCasaIds = [...new Set(casaIds)];
+                
+                return {
+                  judet,
+                  puncte: count,
+                  case: uniqueCasaIds.length
+                };
+              })
           };
           break;
         }
           
-        case 'financial':
+        case 'financial': {
           // Adaugă date pentru top case după profit
           dataContext.financial = {
             topProfit: dateFinanciare
@@ -186,8 +139,9 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
               .slice(0, 5)
           };
           break;
+        }
           
-        case 'custom':
+        case 'custom': {
           // Pentru întrebări custom, includem toate datele relevante
           dataContext = {
             ...dataContext,
@@ -217,6 +171,7 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
             }
           };
           break;
+        }
       }
       
       // Trimite întrebarea către LLM
@@ -230,6 +185,65 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
     }
   };
   
+  // Generare analiză la schimbarea tipului sau la încărcarea inițială (dacă există întrebare)
+  useEffect(() => {
+    if (initialQuestion) {
+      handleQuestionSubmit();
+    }
+  }, [initialQuestion, handleQuestionSubmit]);
+  
+  // Generează insights automate
+  const generateInsights = async () => {
+    setIsLoading(true);
+    
+    try {
+      // Pregătește un context condensat pentru LLM
+      const dataContext = {
+        numCaseSchimb: caseSchimb.length,
+        numPuncteSchimb: puncteSchimb.length,
+        topJudete: Object.entries(distributionByLocation)
+          .map(([judet, count]) => ({ judet, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 5),
+        metrics: financialMetrics,
+        trends: {
+          caseActive: caseSchimb.filter(c => !c["DATA INCHIDERE CASA"]).length,
+          puncteActive: puncteSchimb.filter(p => !p["DATA INCHIDERE PUNCT"]).length,
+          profitTotal: financialMetrics?.profitTotal || 0,
+          numarAngajati: financialMetrics?.numarTotalAngajati || 0
+        }
+      };
+      
+      // Folosim interpretQuestion în loc de suggestInsights
+      const promptTemplate = `
+        Analizează datele furnizate despre casele de schimb valutar și generează 
+        5 insights scurte și relevante bazate pe aceste date. Răspunde cu o listă 
+        de insights separate prin linii noi, fără numerotare sau marcatori.
+      `;
+      
+      const response = await LLMService.interpretQuestion(promptTemplate, dataContext);
+      
+      // Transformăm răspunsul text în array de insights
+      const insightsList = response.split('\n')
+                              .map(line => line.trim())
+                              .filter(line => line.length > 0);
+                              
+      setInsights(insightsList);
+    } catch (error) {
+      console.error('Eroare la generarea insights-urilor:', error);
+      setInsights(['Nu s-au putut genera insights automate.']);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  // Generare de insights automate la încărcarea componentei
+  useEffect(() => {
+    if (caseSchimb.length && puncteSchimb.length && dateFinanciare.length) {
+      generateInsights();
+    }
+  }, [caseSchimb, puncteSchimb, dateFinanciare, generateInsights]);
+  
   // Generează un raport narativ
   const generateNarrativeReport = async () => {
     setIsLoading(true);
@@ -242,7 +256,10 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
         numPuncteSchimb: puncteSchimb.length,
         caseActive: caseSchimb.filter(c => !c["DATA INCHIDERE CASA"]).length,
         puncteActive: puncteSchimb.filter(p => !p["DATA INCHIDERE PUNCT"]).length,
-        distributieJudete: getLocationDistribution(distributionByLocation, 10),
+        distributieJudete: Object.entries(distributionByLocation)
+          .map(([judet, count]) => ({ judet, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 10),
         topCase: Object.entries(
           puncteSchimb.reduce((acc, punct) => {
             const casaId = punct["COD CASA  CU S"];
@@ -352,8 +369,135 @@ const DataAnalysisLLM: React.FC<Props> = ({ initialQuestion = '' }) => {
         </div>
       </div>
       
-      {/* Restul componentei rămâne la fel */}
-      {/* ... */}
+      {/* Sugestii de întrebări predefinite */}
+      <div className="mb-4">
+        <h3 className="text-lg font-semibold mb-2">Întrebări Sugerate</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {selectedAnalysisType === 'trend' && (
+            <>
+              <button 
+                className="text-left px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm"
+                onClick={() => {
+                  setQuestion("Cum a evoluat profitabilitatea caselor de schimb în ultimii ani?");
+                  handleQuestionSubmit();
+                }}
+              >
+                Cum a evoluat profitabilitatea caselor de schimb în ultimii ani?
+              </button>
+              <button 
+                className="text-left px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm"
+                onClick={() => {
+                  setQuestion("Care sunt tendințele în contribuțiile la buget ale caselor de schimb?");
+                  handleQuestionSubmit();
+                }}
+              >
+                Care sunt tendințele în contribuțiile la buget ale caselor de schimb?
+              </button>
+            </>
+          )}
+          
+          {selectedAnalysisType === 'geographic' && (
+            <>
+              <button 
+                className="text-left px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm"
+                onClick={() => {
+                  setQuestion("Care sunt județele cu cele mai multe puncte de schimb valutar?");
+                  handleQuestionSubmit();
+                }}
+              >
+                Care sunt județele cu cele mai multe puncte de schimb valutar?
+              </button>
+              <button 
+                className="text-left px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm"
+                onClick={() => {
+                  setQuestion("Cum sunt distribuite casele de schimb între regiunile țării?");
+                  handleQuestionSubmit();
+                }}
+              >
+                Cum sunt distribuite casele de schimb între regiunile țării?
+              </button>
+            </>
+          )}
+          
+          {selectedAnalysisType === 'financial' && (
+            <>
+              <button 
+                className="text-left px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm"
+                onClick={() => {
+                  setQuestion("Care sunt cele mai profitabile case de schimb?");
+                  handleQuestionSubmit();
+                }}
+              >
+                Care sunt cele mai profitabile case de schimb?
+              </button>
+              <button 
+                className="text-left px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm"
+                onClick={() => {
+                  setQuestion("Există o corelație între numărul de angajați și profitabilitate?");
+                  handleQuestionSubmit();
+                }}
+              >
+                Există o corelație între numărul de angajați și profitabilitate?
+              </button>
+            </>
+          )}
+          
+          {selectedAnalysisType === 'custom' && (
+            <>
+              <button 
+                className="text-left px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm"
+                onClick={() => {
+                  setQuestion("Care sunt cele mai importante case de schimb după numărul de puncte?");
+                  handleQuestionSubmit();
+                }}
+              >
+                Care sunt cele mai importante case de schimb după numărul de puncte?
+              </button>
+              <button 
+                className="text-left px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm"
+                onClick={() => {
+                  setQuestion("Generează un raport comprehensiv despre piața caselor de schimb valutar");
+                  generateNarrativeReport();
+                }}
+              >
+                Generează un raport comprehensiv despre piața caselor de schimb valutar
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      
+      {/* Formular pentru întrebare personalizată */}
+      <div className="mb-4">
+        <div className="flex">
+          <input
+            type="text"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder="Adresează o întrebare despre datele disponibile..."
+            className="flex-grow px-4 py-2 border rounded-l focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            onClick={handleQuestionSubmit}
+            disabled={isLoading || !question.trim()}
+            className="px-4 py-2 bg-blue-500 text-white rounded-r hover:bg-blue-600 disabled:bg-gray-400"
+          >
+            {isLoading ? 'Se procesează...' : 'Analizează'}
+          </button>
+        </div>
+      </div>
+      
+      {/* Afișare răspuns */}
+      {analysis && (
+        <div className="mt-6 p-4 bg-gray-50 rounded-lg border">
+          <h3 className="text-lg font-semibold mb-2">Analiză</h3>
+          <div className="prose max-w-none">
+            {analysis.split('\n\n').map((paragraph, index) => (
+              <p key={index} className="mb-2">{paragraph}</p>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
